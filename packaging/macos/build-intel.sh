@@ -60,7 +60,7 @@ fi
 step "pakon_app (x86_64)"
 (cd "$REPO/rust" && cargo build --release --locked -p pakon-app --target "$TARGET")
 # Unicorn's JIT must be the Intel backend (packaging/macos/cc-x86_64).
-CH="$(ls -t "$REPO"/rust/target/"$TARGET"/release/build/unicorn-engine-sys-*/out/build/config-host.h | head -1)"
+CH="$(ls -t "$REPO"/rust/target/"$TARGET"/release/build/unicorn-engine-sys/*/out/build/config-host.h | head -1)"
 grep -q "^#define HOST_X86_64 1" "$CH" || { echo "Unicorn built for the wrong host ($CH)." \
     "From rust/: cargo clean --release -p unicorn-engine-sys --target $TARGET" >&2; exit 1; }
 BIN="$REPO/rust/target/$TARGET/release/pakon_app"

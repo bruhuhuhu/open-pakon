@@ -12,17 +12,25 @@ notarized. It does not include Sparkle, so it will not replace itself with
 an upstream release. Scans and settings still go to the usual Pakon folders
 (`~/pakon`, `~/Library/Application Support/Pakon`).
 
-These steps were written from the upstream 1.1.0 packaging scripts. They
-were not executed on macOS in the environment that prepared this tree.
+The Intel build was confirmed on the user's Mac. Two things that build
+turned up are in the prerequisites and in `build-intel.sh`: QEMU's
+configure needs `pkg-config` on `PATH`, and current Cargo writes the
+Unicorn build under `build/unicorn-engine-sys/<hash>/out`.
 
 ## 1. Prerequisites
 
-macOS 13 or later. Xcode's command-line tools, CMake, Rust, Node.js 22.12
-or newer (20.19 or newer also works), and Pillow for the icon.
+macOS 13 or later. Xcode's command-line tools, CMake, pkg-config, Rust,
+Node.js 22.12 or newer (20.19 or newer also works), and Pillow for the icon.
+
+QEMU's configure, run while `unicorn-engine-sys` builds, requires a
+`pkg-config` binary on `PATH`. Xcode's command-line tools do not provide
+one. `brew install pkg-config` is the normal fix. Any `pkg-config` is
+enough: a stub that prints a version for `--version` and exits 1 otherwise
+was enough for that configure check.
 
 ```sh
 xcode-select --install
-brew install cmake node@22
+brew install cmake pkg-config node@22
 # If brew's node is keg-only, put it on PATH, for example:
 # export PATH="$(brew --prefix node@22)/bin:$PATH"
 node --version    # v22.12 or newer, or v20.19 or newer
