@@ -12,25 +12,59 @@ notarized. It does not include Sparkle, so it will not replace itself with
 an upstream release. Scans and settings still go to the usual Pakon folders
 (`~/pakon`, `~/Library/Application Support/Pakon`).
 
-The Intel build was confirmed on the user's Mac. Two things that build
-turned up are in the prerequisites and in `build-intel.sh`: QEMU's
-configure needs `pkg-config` on `PATH`, and current Cargo writes the
-Unicorn build under `build/unicorn-engine-sys/<hash>/out`.
+These steps were run and verified on 21 Nov 2026 on the owner's Intel
+MacBook (i5-1038NG7, macOS 26.7.2). The result was installed as
+`/Applications/Pakon Trim.app` and works.
+
+### Why this app is smaller than the official one
+
+The official `Pakon.app` is about 64 MB and this build is about 38 MB, but
+nothing is missing. The official binary is universal: it carries both an
+Intel and an Apple silicon copy of the program in one file (about 51 MB).
+This build contains only the Intel copy. The official app also bundles the
+Sparkle auto-updater framework (about 2.6 MB), which this build leaves out
+on purpose. Resources, firmware, profiles, and OEM files are the same.
 
 ## 1. Prerequisites
 
-macOS 13 or later. Xcode's command-line tools, CMake, pkg-config, Rust,
-Node.js 22.12 or newer (20.19 or newer also works), and Pillow for the icon.
+### What is actually installed on the owner's Mac (no Homebrew, no sudo)
 
-QEMU's configure, run while `unicorn-engine-sys` builds, requires a
-`pkg-config` binary on `PATH`. Xcode's command-line tools do not provide
-one. `brew install pkg-config` is the normal fix. Any `pkg-config` is
-enough: a stub that prints a version for `--version` and exits 1 otherwise
-was enough for that configure check.
+Homebrew needs an admin password, so everything was installed inside the
+home folder instead. Before building, load it all with:
+
+```sh
+source "$HOME/.cargo/env"     # rustc 1.100.0 + x86_64-apple-darwin target
+export PATH="$HOME/.local/bin:$HOME/.local/node/bin:$(python3 -m site --user-base)/bin:$PATH"
+# ~/.local/node      Node.js v22 (official tarball)
+# user-base bin      cmake 4.x and pillow, from `pip3 install --user cmake pillow`
+# ~/.local/bin       pkg-config stub (see below)
+```
+
+Xcode command-line tools were already installed.
+
+**pkg-config is required.** QEMU's `configure` inside the
+`unicorn-engine-sys` crate aborts with `pkg-config binary 'pkg-config' not
+found` if there is none on `PATH`. A symptom is an empty `config-host.h` and
+then `typedef redefinition ... Int128 vs __int128` errors. Unicorn never
+actually queries any package, so this stub is enough:
+
+```sh
+mkdir -p ~/.local/bin
+printf '#!/bin/sh\ncase "$1" in --version) echo 0.29.2;; *) exit 1;; esac\n' > ~/.local/bin/pkg-config
+chmod +x ~/.local/bin/pkg-config
+```
+
+After a failed Unicorn build, delete only its cache before retrying:
+`rm -rf rust/target/x86_64-apple-darwin/release/build/unicorn-engine-sys`.
+
+### Generic instructions (machine with Homebrew)
+
+macOS 13 or later. Xcode's command-line tools, CMake, Rust, Node.js 22.12
+or newer (20.19 or newer also works), and Pillow for the icon.
 
 ```sh
 xcode-select --install
-brew install cmake pkg-config node@22
+brew install cmake node@22
 # If brew's node is keg-only, put it on PATH, for example:
 # export PATH="$(brew --prefix node@22)/bin:$PATH"
 node --version    # v22.12 or newer, or v20.19 or newer
@@ -97,8 +131,10 @@ The disk image is a convenience copy of the same app plus an Applications
 shortcut. Install by copying the app:
 
 ```sh
-cp -R dist/macos/Pakon.app /Applications/
-open /Applications/Pakon.app
+# On the owner's Mac it is installed under a separate name:
+ditto dist/macos/Pakon.app "/Applications/Pakon Trim.app"
+xattr -dr com.apple.quarantine "/Applications/Pakon Trim.app"
+open "/Applications/Pakon Trim.app"
 ```
 
 Or open `dist/macos/Pakon.app` directly. If macOS says it cannot verify the
@@ -134,3 +170,44 @@ line at Base 8, set **Top** to `10` px (or about `0.7` %) and leave the
 other edges at 0. The boxes on the strip move in by that amount. Adjust and
 Export, including the contact sheet, use it. The value is kept in
 `~/Library/Application Support/Pakon/settings.json` under `edge_trim`.
+
+## 6. What this fork changes (vs upstream jorshhh/open-pakon v1.1.0)
+
+Branch `sensor-trim` on https://github.com/bruhuhuhu/open-pakon, two
+commits on top of upstream v1.1.0 (`eb8003c`) plus this notes update:
+
+1. **Sensor-edge trim.** The owner's Pakon has a fixed ~10 px white band
+   along one long edge of the sensor (hardware alignment; confirmed by
+   flipping the film, the band stays on the same scanner side). OpenPakon
+   rotates frames upright, so the band used to land on different sides.
+   The trim is applied in sensor coordinates, *before* rotation.
+   - `rust/crates/pakon-roll/src/trim.rs` (new): per-edge trim (Top,
+     Bottom, Leading, Trailing; px or %) and optional auto blank-edge
+     detection (max 2 % per side).
+   - `rust/crates/pakon-roll/src/lib.rs`, `pakon-web/src/{files,jobs,lib}.rs`:
+     applied to JPEG, TIFF, raw TIFF export and the contact sheet; stored in
+     `settings.json` as `edge_trim`; API tests in `pakon-web/tests/api.rs`.
+   - `web/src/components/EdgeTrimFields.vue` (new), `SettingsSpace.vue`,
+     `FramesSpace.vue`, `AdjustSpace.vue`, `web/src/state/{trim,app,roll}.ts`,
+     `main.css`: the Sensor trim controls and inset frame boxes.
+2. **Intel build.** `packaging/macos/build-intel.sh` (new) builds a native
+   x86_64 app, version `1.1.0-trim`, no Sparkle. Its Unicorn check looks in
+   `build/unicorn-engine-sys/*/out` (current Cargo layout).
+
+## 7. Updating when upstream releases a new OpenPakon
+
+```sh
+cd ~/src/open-pakon-fork                     # git clone of the fork
+git remote add upstream https://github.com/jorshhh/open-pakon.git 2>/dev/null
+git fetch upstream --tags
+git checkout sensor-trim
+git rebase upstream/main                     # or the new release tag
+# resolve conflicts if any (likely spots: pakon-web/src/jobs.rs, SettingsSpace.vue)
+# bump the version string in build-intel.sh, e.g. 1.2.0-trim
+packaging/macos/build-intel.sh               # with the PATH setup from section 1
+ditto dist/macos/Pakon.app "/Applications/Pakon Trim.app"
+xattr -dr com.apple.quarantine "/Applications/Pakon Trim.app"
+git push --force-with-lease origin sensor-trim
+```
+
+Then re-check Sensor trim is still Top = 10 px in Settings.
