@@ -55,6 +55,8 @@ pub async fn api_status(State(app): State<Arc<App>>) -> Response {
         "version": update::current(),           // the app's, null from a checkout
         "native_picker": app.picker().is_some(), // /api/pick shows the system's dialog
         "logs": log_dir().is_some() && reveal_label().is_some(), // Settings › Show log
+        // scanner inset, applied before each frame is turned. Missing → none.
+        "edge_trim": app.settings.setting("edge_trim").as_ref().map(pakon_roll::EdgeTrimSpec::from_json).unwrap_or_default().to_json(),
         // a warm scanner Pakon did not start (TLX, PakonScan, another computer)
         "foreign_firmware": if state == "warm" { app.loads.foreign() } else { None },
     }))
@@ -155,6 +157,17 @@ fn writable(dir: &Path) -> bool {
     #[cfg(not(unix))]
     {
         std::fs::metadata(dir).is_ok_and(|m| !m.permissions().readonly())
+    }
+}
+
+/// Save the sensor-edge trim. The body is the settings object (unit px or
+/// percent, four edges, auto). Values are clamped; the stored object is
+/// returned.
+pub async fn api_edge_trim(State(app): State<Arc<App>>, body: Bytes) -> Response {
+    let spec = pakon_roll::EdgeTrimSpec::from_json(&Value::Object(fields(&body)));
+    match app.settings.set_setting("edge_trim", spec.to_json()) {
+        Ok(()) => Json(spec.to_json()).into_response(),
+        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e),
     }
 }
 

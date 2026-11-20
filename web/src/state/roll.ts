@@ -19,6 +19,7 @@ export interface Dx { name?: string; iso: number }
 // The prescan's `done` event: the long preview and what framing needs.
 export interface RollMeta {
   rows: number;          // full-resolution rows along the strip
+  cols?: number;         // sensor columns, across the film
   scale: number;         // preview px per full row
   preview_w: number;
   preview_h: number;

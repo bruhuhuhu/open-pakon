@@ -23,6 +23,37 @@
   <br>macOS 13 or later · Windows 10 or 11 (64-bit) · Ubuntu 22.04 or later, Linux Mint 21 or later
 </p>
 
+## Personal build
+
+This is a modified personal build of [OpenPakon](https://github.com/jorshhh/open-pakon) **1.1.0**
+(upstream commit `eb8003c5dcbbfa5e69bf735ee38bf416ffdc1f12`). OpenPakon is
+Copyright 2025–2026 Jorge Rangel and is licensed under the GNU Affero
+General Public License, version 3 or later (`LICENSE`, `NOTICE`). These
+modifications are released under the same license. This is not an upstream
+release and it is not affiliated with the OpenPakon project, Kodak, or Pakon.
+
+**Sensor edge trim.** On some scanners the frame sits a few pixels past one
+long edge of the sensor. Every saved picture then has a thin white line on
+that edge. Turning a frame upright moves the line (top of a landscape frame,
+the side of a portrait frame). Flipping the strip does not, because the
+offset belongs to the scanner, not the film.
+
+Frames and Settings both have **Sensor trim**: a fixed inset for each
+sensor edge, in scan pixels or a percent of that side, applied before the
+picture is rotated. It is stored in Pakon's `settings.json` and starts at
+0, which leaves scans unchanged. Top is the top of the film strip. At
+Base 8 (1500 × 2250), about 10 pixels, or 0.7%, covers a line of that
+size. An optional **Auto blank edge** can also drop a near-uniform white
+band, at most 2% of an edge, when the line is not the same width every time.
+
+The inset is used for JPEGs, TIFFs, the contact sheet, Adjust's previews,
+and the raw-negative TIFF (that file is the same cropped frame). The boxes
+on Frames shrink to show the fixed trim. Auto-trim is decided per frame
+when the pictures are rendered, so the boxes show only the fixed part.
+
+Build this copy on an Intel Mac with [BUILD-PERSONAL.md](BUILD-PERSONAL.md).
+`packaging/macos/build.sh` only runs on Apple silicon.
+
 ![Pakon's Frames page: a colour roll laid out as a strip, with a box around each picture](docs/images/frames.jpg)
 
 ## What is this?

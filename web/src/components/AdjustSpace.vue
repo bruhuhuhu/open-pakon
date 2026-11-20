@@ -10,6 +10,7 @@ import { app, remembered, setBusy, showSpace } from '../state/app';
 import { edited, editJSON, noEdit, type Edit, type Slider } from '../state/edits';
 import { loadFrames, resetExport } from '../state/exported';
 import { roll } from '../state/roll';
+import { trim } from '../state/trim';
 import Btn from '../ui/Btn.vue';
 import Card from '../ui/Card.vue';
 import EmptyCard from '../ui/EmptyCard.vue';
@@ -105,7 +106,10 @@ const px = computed(() => {
 
 // ── Previews: the service renders the boxes small once, then any frame
 // with any edit on request ────────────────────────────────────────────────
-const boxKey = () => JSON.stringify(roll.crops.map(c => [Math.round(c.c), Math.round(c.w)]));
+const boxKey = () => JSON.stringify({
+  boxes: roll.crops.map(c => [Math.round(c.c), Math.round(c.w)]),
+  trim: [trim.unit, trim.leading, trim.trailing, trim.top, trim.bottom, trim.auto],
+});
 const opened = ref('');           // the boxes the service's previews are of
 const stamp = ref(0);
 const status = ref({ busy: false, value: null as number | null, label: '', error: false });
@@ -123,6 +127,7 @@ async function openPreviews() {
   await postSSE('/api/adjust/open', {
     centres: roll.crops.map(c => Math.round(c.c)),
     widths: roll.crops.map(c => Math.round(c.w)),
+    trim: { ...trim },
   }, ev => {
     if (ev.type === 'progress') status.value = { busy: true, value: ev.pct, label: ev.step, error: false };
     else if (ev.type === 'done') { opened.value = key; stamp.value = Date.now(); status.value = { busy: false, value: null, label: '', error: false }; }
@@ -289,6 +294,7 @@ async function exportFrames() {
     edits: roll.crops.map(c => editJSON(c.e)),
     ice: ice.value && iceOk.value,
     sharpen: sharpen.value,
+    trim: { ...trim },
   }, ev => {
     if (ev.type === 'progress') status.value = { busy: true, value: ev.pct, label: ev.step, error: false };
     else if (ev.type === 'done') {

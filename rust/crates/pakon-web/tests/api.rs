@@ -56,6 +56,19 @@ async fn routes_without_a_scanner() {
         assert!(st.get(key).is_some(), "status has {key}");
     }
     assert_eq!(st["telemetry"], json!({"available": false, "asked": false, "usage": false, "crashes": false}));
+    assert_eq!(st["edge_trim"], json!({"unit": "px", "leading": 0.0, "trailing": 0.0, "top": 0.0, "bottom": 0.0, "auto": false}));
+
+    let (s, v) = call(&r, "POST", "/api/edge-trim", Some(json!({"unit": "percent", "top": 80, "bottom": -3, "leading": "1.5", "auto": true}))).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(v["unit"], json!("percent"));
+    assert_eq!(v["top"], json!(25.0));
+    assert_eq!(v["bottom"], json!(0.0));
+    assert_eq!(v["leading"], json!(1.5));
+    assert_eq!(v["auto"], json!(true));
+    let (s, st) = call(&r, "GET", "/api/status", None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(st["edge_trim"]["top"], json!(25.0));
+    assert_eq!(st["edge_trim"]["auto"], json!(true));
 
     // the work folder and the order counter
     let work = temp("work");

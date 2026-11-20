@@ -29,6 +29,7 @@ export interface Status {
   logs?: boolean;
   foreign_firmware?: boolean | null;
   version?: string;
+  edge_trim?: { unit?: string; leading?: number; trailing?: number; top?: number; bottom?: number; auto?: boolean };
 }
 
 export const app = reactive({

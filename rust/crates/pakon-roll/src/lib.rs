@@ -24,7 +24,9 @@ use pakon_oem::{dice, sba};
 use serde::{Deserialize, Serialize};
 
 pub mod strips;
+pub mod trim;
 pub use strips::StripInfo;
+pub use trim::EdgeTrimSpec;
 
 /// Progress: (step, fraction 0..1).
 pub type Progress<'a> = &'a (dyn Fn(&str, f64) + Sync);
@@ -380,12 +382,6 @@ fn sba_shifts(env: &Env, crops: &[ArrayView3<u16>], oem: Option<&Oem>, roll: Opt
     }
 }
 
-/// `rgb[max(0, r1 - fw):r1]`, `r1 = min(rows, max(0, centre - fw // 2) + fw)`.
-fn crop_rows(rows: usize, centre: i64, fw: usize) -> (usize, usize) {
-    let r1 = ((centre - (fw as i64).div_euclid(2)).max(0) + fw as i64).min(rows as i64);
-    ((r1 - fw as i64).max(0) as usize, r1.max(0) as usize)
-}
-
 /// `np.rot90(a, k)` as a view.
 fn rot90<T>(a: ArrayView3<T>, k: usize) -> ArrayView3<T> {
     let mut v = a;
@@ -672,6 +668,9 @@ pub struct ExportRequest {
     pub adjustments: Option<Vec<Option<Adjust>>>,
     /// Per-frame turn and flip (none: as scanned).
     pub orient: Option<Vec<Orient>>,
+    /// Inset in scanner coordinates, applied before [`Orient::apply`].
+    /// Default trims nothing.
+    pub trim: EdgeTrimSpec,
 }
 
 /// The files written for one frame.
@@ -852,15 +851,20 @@ pub fn export_frames(env: &Env, req: &ExportRequest, progress: Option<Progress>)
 
     let npy = Npy::open(&req.ribbon)?;
     let rgb = npy.view3()?;
-    let rows = rgb.len_of(Axis(0));
     let base_k = rot_k(req.rotate);
     let n = req.centres.len();
     let width_of = |i: usize| req.widths.as_ref().and_then(|w| w.get(i).copied()).unwrap_or(req.frame_w);
-    let crop_at = |c: i64, fw: usize| {
-        let (a, b) = crop_rows(rows, c, fw);
-        rgb.slice_move(s![a..b, .., ..])
+    // Negatives: a dark raw edge is white on the positive. Slides are already
+    // positive, so a bright edge is high raw.
+    let invert = req.film != FilmKind::Slide;
+    if req.trim.is_set() {
+        eprintln!("sensor edge trim: {}", req.trim.summary());
+    }
+    let windows = trim::windows(rgb.view(), &req.centres, &width_of, &req.trim, invert);
+    let crop = |i: usize| {
+        let (r0, r1, c0, c1) = windows[i];
+        rgb.slice_move(s![r0..r1, c0..c1, ..])
     };
-    let crop = |i: usize| crop_at(req.centres[i], width_of(i));
 
     let ir_npy = if req.ice && env.ir_ribbon_path().is_file() { Some(Npy::open(&env.ir_ribbon_path())?) } else { None };
     let ir_rib = ir_npy.as_ref().map(|n| n.view2()).transpose()?;
@@ -873,19 +877,29 @@ pub fn export_frames(env: &Env, req: &ExportRequest, progress: Option<Progress>)
     let use_dice = ir_rib.is_some() && env.dice_on();
 
     // OEM scene balance of the confirmed frames against the whole roll.
-    let roll: Option<Vec<ArrayView3<u16>>> = req.roll_centres.as_ref().map(|rc| rc.iter().map(|&c| crop_at(c, req.frame_w)).collect());
+    // The roll's own frames take the same sensor inset, so the white edge
+    // is not part of what the balance weighs.
+    let roll: Option<Vec<ArrayView3<u16>>> = req.roll_centres.as_ref().map(|rc| {
+        let ws = trim::windows(rgb.view(), rc, &|_| req.frame_w, &req.trim, invert);
+        ws.iter().map(|&(r0, r1, c0, c1)| rgb.slice(s![r0..r1, c0..c1, ..])).collect()
+    });
     let crops: Vec<ArrayView3<u16>> = (0..n).map(crop).collect();
     let renderer = Renderer::new(env, req, &crops, roll.as_deref(), progress)?;
 
     let clean = |i: usize, part: ArrayView3<u16>| -> Result<Array3<u16>, String> {
         let Some(ir_rib) = &ir_rib else { return Ok(part.to_owned()) };
-        let fw = width_of(i);
-        let (a, b) = crop_rows(rows, req.centres[i], fw);
-        let ir = ir_rib.slice(s![a..b, ..]);
+        let (mut r0, mut r1, mut c0, mut c1) = windows[i];
+        r1 = r1.min(ir_rib.len_of(Axis(0)));
+        c1 = c1.min(ir_rib.len_of(Axis(1)));
+        r0 = r0.min(r1);
+        c0 = c0.min(c1);
+        let ir = ir_rib.slice(s![r0..r1, c0..c1]);
+        // The calibration's noise factor is one value per sensor column.
+        let noise: &[f32] = if c1 <= ir_noise.len() { &ir_noise[c0..c1] } else { &ir_noise[..] };
         let (out, mask) = if use_dice {
             dice::with_thread_dice(&env.dice_dll, |d| dice::clean_frame(d, part, ir, true))?
         } else {
-            ice::clean_frame(part, ir, &ir_noise, dpi)
+            ice::clean_frame(part, ir, noise, dpi)
         };
         let pct = 100.0 * mask.iter().filter(|&&m| m).count() as f64 / mask.len().max(1) as f64;
         eprintln!("ICE frame {} ({}): {pct:.2}% rebuilt", i + 1, if use_dice { "OEM" } else { "ours" });
@@ -909,7 +923,8 @@ pub fn export_frames(env: &Env, req: &ExportRequest, progress: Option<Progress>)
             sheet_turn: orient.sheet_turn(),
         };
         let dx = req.dx_film.as_ref();
-        // raw negative (uninverted, 16-bit), for inverting in another tool
+        // raw negative (uninverted, 16-bit), for inverting in another tool.
+        // It is this same cropped frame, so the sensor inset is in it too.
         output::write_tiff16(&files.raw_tiff, &Picture16::Rgb(part.view()), dx)?;
         output::write_tiff16(&files.tiff, &pos.picture(), dx)?;
         output::write_jpeg(&files.jpg, rendered.view(), 92, dx)?;
@@ -994,10 +1009,8 @@ const BIG_KEPT: usize = 8;
 pub struct Previewer {
     renderer: Renderer,
     ribbon: PathBuf,
-    /// Each box's ribbon rows.
-    rows: Vec<(usize, usize)>,
-    /// The ribbon's width (samples per row).
-    cols: usize,
+    /// Each frame after the sensor trim: (row0, row1, col0, col1).
+    windows: Vec<(usize, usize, usize, usize)>,
     /// Each crop shrunk to [`PREVIEW_PX`], and by what factor.
     small: Vec<(std::sync::Arc<Array3<u16>>, usize)>,
     /// The larger crops asked for last, newest first.
@@ -1009,18 +1022,14 @@ pub struct Previewer {
 pub fn previewer(env: &Env, req: &ExportRequest, progress: Option<Progress>) -> Result<Previewer, String> {
     let npy = Npy::open(&req.ribbon)?;
     let rgb = npy.view3()?;
-    let n_rows = rgb.len_of(Axis(0));
     let n = req.centres.len();
     let widths: Vec<usize> = (0..n).map(|i| req.widths.as_ref().and_then(|w| w.get(i).copied()).unwrap_or(req.frame_w)).collect();
-    let rows: Vec<(usize, usize)> = (0..n).map(|i| crop_rows(n_rows, req.centres[i], widths[i])).collect();
-    let crops: Vec<ArrayView3<u16>> = rows.iter().map(|&(a, b)| rgb.slice(s![a..b, .., ..])).collect();
+    let invert = req.film != FilmKind::Slide;
+    let windows = trim::windows(rgb.view(), &req.centres, &|i| widths[i], &req.trim, invert);
+    let crops: Vec<ArrayView3<u16>> = windows.iter().map(|&(a, b, c0, c1)| rgb.slice(s![a..b, c0..c1, ..])).collect();
     let roll: Option<Vec<ArrayView3<u16>>> = req.roll_centres.as_ref().map(|rc| {
-        rc.iter()
-            .map(|&c| {
-                let (a, b) = crop_rows(n_rows, c, req.frame_w);
-                rgb.slice(s![a..b, .., ..])
-            })
-            .collect()
+        let ws = trim::windows(rgb.view(), rc, &|_| req.frame_w, &req.trim, invert);
+        ws.into_iter().map(|(a, b, c0, c1)| rgb.slice(s![a..b, c0..c1, ..])).collect()
     });
     let renderer = Renderer::new(env, req, &crops, roll.as_deref(), progress)?;
     emit(progress, "Preparing the previews", 0.5);
@@ -1035,8 +1044,7 @@ pub fn previewer(env: &Env, req: &ExportRequest, progress: Option<Progress>) -> 
     Ok(Previewer {
         renderer,
         ribbon: req.ribbon.clone(),
-        cols: rgb.len_of(Axis(1)),
-        rows,
+        windows,
         small,
         big: Mutex::new(Vec::new()),
         base_k: rot_k(req.rotate),
@@ -1057,8 +1065,8 @@ impl Previewer {
     /// frames shrink side by side.
     fn crop(&self, i: usize, px: usize) -> Result<(std::sync::Arc<Array3<u16>>, usize), String> {
         let (small, small_f) = self.small.get(i).ok_or_else(|| format!("no frame {}", i + 1))?;
-        let (a, b) = self.rows[i];
-        let f = factor((b - a, self.cols, 3), px);
+        let (a, b, c0, c1) = self.windows[i];
+        let f = factor((b - a, c1 - c0, 3), px);
         if f >= *small_f {
             return Ok((small.clone(), *small_f));
         }
@@ -1073,7 +1081,7 @@ impl Previewer {
         }
         let npy = Npy::open(&self.ribbon)?;
         let rgb = npy.view3()?;
-        let c = std::sync::Arc::new(shrink(rgb.slice(s![a..b, .., ..]), f));
+        let c = std::sync::Arc::new(shrink(rgb.slice(s![a..b, c0..c1, ..]), f));
         let mut big = self.big.lock().unwrap();
         big.retain(|(bi, bf, _)| !(*bi == i && *bf == f));
         big.insert(0, (i, f, c.clone()));
@@ -1117,11 +1125,11 @@ mod tests {
 
     #[test]
     fn crop_rows_like_python() {
-        assert_eq!(crop_rows(10000, 5000, 3000), (3500, 6500));
-        assert_eq!(crop_rows(10000, 100, 3000), (0, 3000));
-        assert_eq!(crop_rows(10000, 9900, 3000), (7000, 10000));
-        assert_eq!(crop_rows(2000, 1000, 3000), (0, 2000));
-        assert_eq!(crop_rows(10000, 5001, 3001), (3501, 6502));
+        assert_eq!(trim::crop_rows(10000, 5000, 3000), (3500, 6500));
+        assert_eq!(trim::crop_rows(10000, 100, 3000), (0, 3000));
+        assert_eq!(trim::crop_rows(10000, 9900, 3000), (7000, 10000));
+        assert_eq!(trim::crop_rows(2000, 1000, 3000), (0, 2000));
+        assert_eq!(trim::crop_rows(10000, 5001, 3001), (3501, 6502));
     }
 
     #[test]
@@ -1190,5 +1198,34 @@ mod tests {
         assert_eq!((a.red, a.blue, a.saturation, a.tone), (12, -30, 5, Tone::None));
         assert_eq!(adjust_from_json(&serde_json::json!({"red": 0.4})), None);
         assert_eq!(adjust_from_json(&serde_json::Value::Null), None);
+    }
+
+    #[test]
+    fn sensor_top_is_cut_before_the_picture_is_turned() {
+        // 8 rows along the film, 6 sensor columns. The last column is the
+        // white band. With no trim the default landscape turn (90° CCW)
+        // puts that column on the top row, and a portrait turn that undoes
+        // it leaves the column on the right.
+        let mut raw = Array3::from_elem((8, 6, 1), 100u16);
+        for y in 0..8 {
+            raw[(y, 5, 0)] = 65000;
+        }
+        let landscape = rot90(raw.view(), 1);
+        assert_eq!(landscape[(0, 0, 0)], 65000);
+        let portrait = Orient { rotate: 90, ..Default::default() }.apply(raw.view(), 1);
+        assert_eq!(portrait[(0, 5, 0)], 65000);
+
+        let spec = EdgeTrimSpec { top: 1.0, ..EdgeTrimSpec::default() };
+        let px = trim::resolve(&spec, 8, 6);
+        let (r0, r1, c0, c1) = trim::frame_window(8, 6, 4, 8, px);
+        assert_eq!((c0, c1), (0, 5));
+        let crop = raw.slice(s![r0..r1, c0..c1, ..]);
+        assert!(rot90(crop, 1).iter().all(|&v| v == 100), "landscape top no longer holds the band");
+        let portrait = Orient { rotate: 90, ..Default::default() }.apply(crop, 1);
+        assert_eq!(portrait.dim().1, 5);
+        assert!(portrait.iter().all(|&v| v == 100), "portrait right edge no longer holds the band");
+        // 180° on top of the landscape turn moves the same sensor edge to the bottom.
+        let upside = Orient { rotate: 180, ..Default::default() }.apply(crop, 1);
+        assert!(upside.iter().all(|&v| v == 100));
     }
 }

@@ -3,6 +3,7 @@
 import { computed, ref } from 'vue';
 import { app, msg } from '../state/app';
 import { saveConsent } from '../telemetry';
+import EdgeTrimFields from './EdgeTrimFields.vue';
 import Btn from '../ui/Btn.vue';
 import Card from '../ui/Card.vue';
 import InfoTip from '../ui/InfoTip.vue';
@@ -44,6 +45,11 @@ const note = 'mb-2 max-w-[72ch] text-small leading-snug text-muted';
 </script>
 
 <template>
+  <Card title="Sensor trim">
+    <p :class="[note, 'mb-3.5']">The frame sits a little past one long edge of this scanner, so every picture picks up a thin white line on that side of the sensor. The numbers below are taken off the frame before it is turned upright, and they are remembered on this computer. Flipping the strip does not move the line. Top is the top of the film strip in Frames. At Base 8, 10 pixels (about 0.7%) covers the line; 0 leaves the scan as it was.</p>
+    <EdgeTrimFields />
+  </Card>
+
   <Card title="Privacy">
     <template #info>
       <InfoTip label="About reports"
@@ -87,6 +93,6 @@ const note = 'mb-2 max-w-[72ch] text-small leading-snug text-muted';
   </Card>
 
   <Card title="About">
-    <p :class="note">Pakon {{ app.status?.version || '(from source)' }}. Not affiliated with Kodak or Pakon.</p>
+    <p :class="note">Pakon {{ app.status?.version || '(from source)' }}. Personal build of OpenPakon 1.1.0 with sensor-edge trim. Not affiliated with Kodak or Pakon.</p>
   </Card>
 </template>

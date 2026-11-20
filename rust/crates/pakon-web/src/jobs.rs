@@ -16,7 +16,7 @@ use axum::Json;
 use pakon_image::colour::Adjust;
 use pakon_image::film::Film;
 use pakon_image::framing::Format;
-use pakon_roll::{ExportRequest, FilmKind, FrameFiles, Orient, Progress};
+use pakon_roll::{EdgeTrimSpec, ExportRequest, FilmKind, FrameFiles, Orient, Progress};
 use serde_json::{json, Value};
 
 use crate::files::reveal_label;
@@ -336,8 +336,25 @@ fn boxes(f: &serde_json::Map<String, Value>) -> Option<(Vec<i64>, Option<Vec<usi
     Some((centres, widths))
 }
 
+/// The trim for this job: the page's, else the one saved in settings.json.
+/// Absent means the saved value, which itself defaults to no trim.
+fn requested_trim(f: &serde_json::Map<String, Value>, settings: &crate::orders::Settings) -> EdgeTrimSpec {
+    match f.get("trim") {
+        Some(v) => EdgeTrimSpec::from_json(v),
+        None => settings.setting("edge_trim").as_ref().map(EdgeTrimSpec::from_json).unwrap_or_default(),
+    }
+}
+
 /// The export (or preview) of `centres` on the processed roll.
-fn export_request(app: &App, meta: &pakon_roll::Meta, raw: Option<&Path>, centres: Vec<i64>, widths: Option<Vec<usize>>, ice: bool) -> ExportRequest {
+fn export_request(
+    app: &App,
+    meta: &pakon_roll::Meta,
+    raw: Option<&Path>,
+    centres: Vec<i64>,
+    widths: Option<Vec<usize>>,
+    ice: bool,
+    trim: EdgeTrimSpec,
+) -> ExportRequest {
     let f32s = |v: [f64; 3]| v.map(|x| x as f32);
     ExportRequest {
         ribbon: PathBuf::from(&meta.ribbon),
@@ -356,6 +373,7 @@ fn export_request(app: &App, meta: &pakon_roll::Meta, raw: Option<&Path>, centre
         scene_dmin: meta.scene_dmin,
         adjustments: None,
         orient: None,
+        trim,
     }
 }
 
@@ -375,7 +393,7 @@ pub async fn api_adjust_open(State(app): State<Arc<App>>, body: Bytes) -> Respon
         roll.previews = None;
         (meta, roll.scan_path.clone())
     };
-    let req = export_request(&app, &meta, raw.as_deref(), centres, widths, false);
+    let req = export_request(&app, &meta, raw.as_deref(), centres, widths, false, requested_trim(&f, &app.settings));
     let env = app.env();
     // Not the roll's `processing` flag: previews must not refuse a scan's
     // processing or an auto-frame. The job lock still runs jobs one at a
@@ -442,7 +460,7 @@ pub async fn api_export_frames(State(app): State<Arc<App>>, body: Bytes) -> Resp
         (meta, roll.scan_path.clone())
     };
     let ice = ice && meta.ice;
-    let mut req = export_request(&app, &meta, raw.as_deref(), centres.clone(), widths.clone(), ice);
+    let mut req = export_request(&app, &meta, raw.as_deref(), centres.clone(), widths.clone(), ice, requested_trim(&f, &app.settings));
     let (adjustments, orient): (Vec<Option<Adjust>>, Vec<Orient>) = edits.iter().map(frame_edit).unzip();
     let edited = adjustments.iter().filter(|a| a.is_some()).count();
     let adjustments: Vec<Option<Adjust>> = adjustments.into_iter().map(|a| with_sharpen(a, sharpen)).collect();

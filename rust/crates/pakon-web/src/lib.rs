@@ -11,6 +11,8 @@
 //! POST /api/scan                    SSE: run a scan (a new order in the work folder; film c41|bw|bwc41|slide,
 //!                                   base 16|8|4)
 //! POST /api/workdir                 set the work folder scans go into
+//! GET  /api/status                  includes `edge_trim` (scanner inset; default none)
+//! POST /api/edge-trim               save that inset in settings.json
 //! POST /api/scan/stop               end the running scan now (the operator's end of roll)
 //! POST /api/eject                   SSE: run the film out of the transport
 //! POST /api/open                    pick a .raw on the host (keeps its crops)
@@ -260,6 +262,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/scan/stop", post(scanner::api_scan_stop))
         .route("/api/eject", post(scanner::api_eject))
         .route("/api/workdir", post(files::api_workdir))
+        .route("/api/edge-trim", post(files::api_edge_trim))
         .route("/api/browse", get(files::api_browse))
         .route("/api/mkdir", post(files::api_mkdir))
         .route("/api/open", post(jobs::api_open))

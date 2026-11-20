@@ -16,6 +16,16 @@ with this program.  If not, see <https://www.gnu.org/licenses/>.
 SPDX-License-Identifier: AGPL-3.0-or-later
 
 
+Personal modifications
+----------------------
+
+This tree is a personal build based on OpenPakon 1.1.0
+(https://github.com/jorshhh/open-pakon, commit eb8003c). The sensor-edge
+trim described in README.md ("Personal build") is a modification of that
+work, distributed under the same GNU Affero General Public License,
+version 3 or later. It is not an upstream release.
+
+
 Third-party components
 ----------------------
 

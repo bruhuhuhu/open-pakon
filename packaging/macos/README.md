@@ -1,5 +1,10 @@
 # Pakon.app (macOS)
 
+> This personal build: an Intel Mac cannot run `build.sh` (it exits unless
+> the machine is Apple silicon). Use [BUILD-PERSONAL.md](../../BUILD-PERSONAL.md)
+> and `build-intel.sh` instead. The notes below are the upstream Apple silicon
+> and universal build.
+
 A double-clickable app for people who don't use the command line. One native
 binary (`rust/crates/pakon-app`) runs the web service, the scanner driver and
 the image pipeline, and shows the page from `web/static` in its own window

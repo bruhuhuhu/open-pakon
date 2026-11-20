@@ -5,6 +5,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { postJSON } from '../api';
 import { app, showSpace } from '../state/app';
 import { roll } from '../state/roll';
+import { resolvedTrim } from '../state/trim';
+import EdgeTrimFields from './EdgeTrimFields.vue';
 import Btn from '../ui/Btn.vue';
 import Card from '../ui/Card.vue';
 import KeyHints from '../ui/KeyHints.vue';
@@ -68,10 +70,25 @@ const leadStart = computed(() => {
 const viewStart = computed(() => Math.max(0, Math.min(leadStart.value, ...roll.crops.map(cp => cp.c - cp.w / 2))));
 const hiddenPx = computed(() => Math.round(viewStart.value * pxPerRow()));
 
-const boxes = computed(() => roll.crops.map((cp, i) => {
-  const w = cp.w * pxPerRow();
-  return { i, left: cp.c * pxPerRow() - w / 2, width: w };
-}));
+// The box is the frame after the sensor trim, so the border sits inside
+// the white line. Top of the strip is the high sensor column.
+const boxes = computed(() => {
+  const cols = meta.value?.cols || 0;
+  const h = stripH.value;
+  return roll.crops.map((cp, i) => {
+    const t = resolvedTrim(cp.w, cols);
+    const widthRows = Math.max(1, cp.w - t.leading - t.trailing);
+    const topPx = cols ? (t.top / cols) * h : 0;
+    const botPx = cols ? (t.bottom / cols) * h : 0;
+    return {
+      i,
+      left: (cp.c - cp.w / 2 + t.leading) * pxPerRow(),
+      width: widthRows * pxPerRow(),
+      top: topPx,
+      height: Math.max(1, h - topPx - botPx),
+    };
+  });
+});
 const active = computed(() => boxes.value[roll.cur] ?? null);
 
 // Strip mode: where each cut strip starts on the film strip.
@@ -205,6 +222,9 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.rem
       <Btn :disabled="!roll.crops.length" @click="showSpace('adjust')">Adjust {{ roll.crops.length }} frames</Btn>
     </div>
     <KeyHints class="mt-2.5" :hints="KEYS" />
+    <div class="mt-3 border-2 border-ink bg-surface-2 px-3 py-2.5">
+      <EdgeTrimFields />
+    </div>
     <div v-if="roll.framesError" class="mt-2.5 font-mono text-body font-semibold text-danger">{{ roll.framesError }}</div>
 
     <div ref="wrap" tabindex="-1" class="strip relative mt-3.5 overflow-x-auto overflow-y-hidden border-2 border-ink bg-ink py-2.5 outline-none">
@@ -218,9 +238,9 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); window.rem
           <div class="pointer-events-none absolute inset-y-0 right-0 bg-black/65" :style="{ left: active.left + active.width + 'px' }"></div>
         </template>
         <div v-for="b in boxes" :key="b.i" @click.stop="select(b.i)"
-             :class="['absolute inset-y-0 box-border cursor-pointer',
+             :class="['absolute box-border cursor-pointer',
                       b.i === roll.cur ? 'z-10 border-3 border-danger' : 'border-2 border-accent/80']"
-             :style="{ left: b.left + 'px', width: b.width + 'px' }">
+             :style="{ left: b.left + 'px', width: b.width + 'px', top: b.top + 'px', height: b.height + 'px' }">
           <span :class="['absolute top-0.5 left-1 border border-black px-1 font-mono text-tiny leading-normal font-semibold',
                          b.i === roll.cur ? 'bg-danger text-white' : 'bg-accent text-black']">{{ b.i + 1 }}</span>
         </div>
